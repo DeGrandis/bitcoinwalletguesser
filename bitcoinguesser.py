@@ -58,45 +58,59 @@ def genwalletinfo():
 
     return wall
 
+def guesslogic():
+    walllist = list()
+    for x in range(0, 50):
+        walllist.append(genwalletinfo())
+
+    urlpath = ""
+    for wallet in walllist:
+        urlpath = urlpath +  wallet['legacy'] + "|" + wallet['bch'] + "|"
+
+    URL = "https://blockchain.info/multiaddr?active="+ urlpath;
+    
+    # URL = 'https://blockchain.info/multiaddr?active=bc1qdaw0z2hn6rlqthxmsjyj4cqsmtfdmzg6kq8re2|18EUPpv14cKuDWyAwodss7zMYq8BzJw5bT|bc1qq3hnrglt54qveq7zf53kcrk3qh9ren8eq0vjgk'
+    #print(URL)
+
+    r = requests.get(url = URL)
+    #print(r.status_code)
+
+    data = r.json()
+    for address in data['addresses']:
+        if address['final_balance'] > 0:
+            for wallet in walllist:
+                if address['address'] == wallet['legacy'] or address['address'] == wallet['bch']:
+
+                    print("FOUND ACTIVE ADDRESS: " + address['address'])
+                    print("LEGACY WALLET ADDR: " + wallet['legacy'])
+                    print("BCH WALLET ADDR: " + wallet['bch'])
+                    print("PRIVATE KEY: "+ wallet['privguess'])
+                    print("WIF: " + wallet['wif'])
+                    print("URL: " + URL)
+                    print()
+    return walllist
 
 def main():
     guessCounter = 0
 
     while True :
+        guesstime = 5
 
-        walllist = list()
-        for x in range(0, 50):
-            walllist.append(genwalletinfo())
+        try:
 
-        urlpath = ""
-        for wallet in walllist:
-            urlpath = urlpath +  wallet['legacy'] + "|" + wallet['bch'] + "|"
+            walllist = guesslogic()
+            guessCounter += len(walllist)*2
 
-        URL = "https://blockchain.info/multiaddr?active="+ urlpath;
+            print("- Guesses: " + str(guessCounter), end='\r')
+            time.sleep(guesstime)
+        except Exception as e:
+            seconds = guesstime * 12
+            print("Exception: " + str(e))
+            print("You were probably Rate Limited.")
+            print("Sleeping"+ str(seconds) + " seconds.")
+            time.sleep(seconds)
+
         
-        # URL = 'https://blockchain.info/multiaddr?active=bc1qdaw0z2hn6rlqthxmsjyj4cqsmtfdmzg6kq8re2|18EUPpv14cKuDWyAwodss7zMYq8BzJw5bT|bc1qq3hnrglt54qveq7zf53kcrk3qh9ren8eq0vjgk'
-        #print(URL)
-
-        r = requests.get(url = URL)
-
-        data = r.json()
-        for address in data['addresses']:
-            if address['final_balance'] > 0:
-                for wallet in walllist:
-                    if address['address'] == wallet['legacy'] or address['address'] == wallet['bch']:
-
-                        print("FOUND ACTIVE ADDRESS: " + address['address'])
-                        print("LEGACY WALLET ADDR: " + wallet['legacy'])
-                        print("BCH WALLET ADDR: " + wallet['bch'])
-                        print("PRIVATE KEY: "+ wallet['privguess'])
-                        print("WIF: " + wallet['wif'])
-                        print("URL: " + URL)
-                        print()
-
-        guessCounter += len(walllist)*2
-
-        print("[] Guesses: " + str(guessCounter), end='\r')
-        time.sleep(3)
         
 if __name__ == '__main__':
     print("--Running BTC wallet Guesser v1.0--")
