@@ -1,20 +1,24 @@
-# Bitcoin Wallet Guesser
-A fun tool to randomly guess and check bitcoin wallets.
+# Solana Wallet Guesser
+A fun tool to randomly generate Solana wallets and check whether any of them have a non-zero balance on the mainnet RPC.
 
 ## Will I ever find a wallet?
-Probably not.  The odds are 2^128, which is 
-340,282,366,920,938,463,463,374,607,431,768,211,456
+The Solana address space is enormous. Random wallet discovery is effectively a probabilistic lottery, but a lucky hit is possible.
 
-But it could happen if you're lucky.
+## Why this version is different
+This repo now uses Solana keypairs instead of Bitcoin wallet generation and checks addresses with the public Solana JSON-RPC API.
 
-# Improvements
-Speedup - run your own node and ping it
+## How to run
+Clone this repo and run it:
 
-# How to run
-Clone this repo.
-Run it.
-`\bitcoinwalletguesser> python .\bitcoinguesser.py
---Running BTC wallet Guesser v1.0--
-[] Guesses: 200
-`
+```bash
+python .\solanaguesser.py --once --wallets 10
+```
+
+You can keep it running in a loop with:
+
+```bash
+python .\solanaguesser.py --wallets 50 --sleep 5
+```
+
+The script will print any wallet with a positive balance and exit early when you use `--once`.
 
