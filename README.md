@@ -1,24 +1,24 @@
-# Solana Wallet Guesser
-A fun tool to randomly generate Solana wallets and check whether any of them have a non-zero balance on the mainnet RPC.
+# Solana Address Balance Checker
+Check SOL balances for addresses you provide. The tool does not generate wallets or handle private keys.
 
-## Will I ever find a wallet?
-The Solana address space is enormous. Random wallet discovery is effectively a probabilistic lottery, but a lucky hit is possible.
-
-## Why this version is different
-This repo now uses Solana keypairs instead of Bitcoin wallet generation and checks addresses with the public Solana JSON-RPC API.
-
-## How to run
-Clone this repo and run it:
+## Setup
 
 ```bash
-python .\solanaguesser.py --once --wallets 10
+python -m pip install -r requirements.txt
 ```
 
-You can keep it running in a loop with:
+Create a text file such as `addresses.txt` with one public address per line. Blank lines and comments beginning with `#` are ignored.
+
+## Run
 
 ```bash
-python .\solanaguesser.py --wallets 50 --sleep 5
+python .\solanaguesser.py --addresses .\addresses.txt
 ```
 
-The script will print any wallet with a positive balance and exit early when you use `--once`.
+The checker waits one second between requests by default. To use a different RPC provider, specify its URL:
 
+```bash
+python .\solanaguesser.py --addresses .\addresses.txt --rpc-url https://your-rpc-endpoint
+```
+
+When the RPC provider returns HTTP 429 or a server error, the checker honors `Retry-After` when provided; otherwise, it uses bounded exponential backoff and stops after five retries.

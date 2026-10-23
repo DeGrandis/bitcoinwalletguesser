@@ -1,84 +1,135 @@
 import argparse
-import sys
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 
 import requests
-from solders.keypair import Keypair
+from solders.pubkey import Pubkey
 
 RPC_URL = "https://api.mainnet-beta.solana.com"
+LAMPORTS_PER_SOL = 1_000_000_000
+MAX_RETRIES = 5
+MAX_BACKOFF_SECONDS = 60
 
 
-def gen_wallet_info():
-    keypair = Keypair()
-    public_key = str(keypair.pubkey())
-    secret_key = keypair.secret().hex()
+def load_addresses(path):
+    addresses = []
+    seen = set()
 
-    wallet = {
-        "public_key": public_key,
-        "private_key_hex": secret_key,
-        "private_key_bytes": keypair.secret(),
-    }
-    return wallet
+    with open(path, encoding="utf-8") as address_file:
+        for line_number, line in enumerate(address_file, start=1):
+            address = line.partition("#")[0].strip()
+            if not address:
+                continue
+
+            try:
+                parsed = Pubkey.from_string(address)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid Solana address on line {line_number}: {address}"
+                ) from exc
+
+            normalized = str(parsed)
+            if normalized not in seen:
+                addresses.append(normalized)
+                seen.add(normalized)
+
+    if not addresses:
+        raise ValueError(f"No Solana addresses found in {path}")
+    return addresses
 
 
-def get_balance(public_key, rpc_url=RPC_URL):
+def _retry_after_seconds(value):
+    if not value:
+        return None
+
+    try:
+        return max(0, float(value))
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+
+def get_balance(public_key, rpc_url=RPC_URL, retries=MAX_RETRIES, session=None):
+    http = session or requests
     payload = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "getBalance",
         "params": [public_key],
     }
-    response = requests.post(rpc_url, json=payload, timeout=20)
-    response.raise_for_status()
-    data = response.json()
-    return data["result"]["value"]
+
+    for attempt in range(retries + 1):
+        try:
+            response = http.post(rpc_url, json=payload, timeout=20)
+        except requests.RequestException:
+            if attempt == retries:
+                raise
+            delay = min(2**attempt, MAX_BACKOFF_SECONDS)
+            print(f"RPC request failed; retrying in {delay} seconds.")
+            time.sleep(delay)
+            continue
+
+        if response.status_code == 429 or response.status_code >= 500:
+            if attempt == retries:
+                response.raise_for_status()
+            retry_after = _retry_after_seconds(response.headers.get("Retry-After"))
+            delay = retry_after if retry_after is not None else min(
+                2**attempt, MAX_BACKOFF_SECONDS
+            )
+            print(f"RPC returned HTTP {response.status_code}; retrying in {delay:g} seconds.")
+            time.sleep(delay)
+            continue
+
+        response.raise_for_status()
+        data = response.json()
+        if "error" in data:
+            raise RuntimeError(f"Solana RPC error: {data['error']}")
+        return data["result"]["value"]
 
 
-def guesslogic(batch_size=50, rpc_url=RPC_URL):
-    walletlist = [gen_wallet_info() for _ in range(batch_size)]
-
-    for wallet in walletlist:
-        public_key = wallet["public_key"]
-        balance = get_balance(public_key, rpc_url)
-        if balance > 0:
-            print("FOUND ACTIVE ADDRESS: " + public_key)
-            print("PRIVATE KEY (hex): " + wallet["private_key_hex"])
-            print("BALANCE (lamports): " + str(balance))
-            print("BALANCE (SOL): " + str(balance / 1_000_000_000))
-            print("RPC URL: " + rpc_url)
-            print()
-
-    return walletlist
+def check_addresses(addresses, rpc_url=RPC_URL, request_interval=1.0):
+    for index, address in enumerate(addresses):
+        balance = get_balance(address, rpc_url)
+        print(f"{address}: {balance} lamports ({balance / LAMPORTS_PER_SOL:.9f} SOL)")
+        if index < len(addresses) - 1 and request_interval > 0:
+            time.sleep(request_interval)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Randomly generate Solana wallets and check them against the public RPC endpoint."
+        description="Check balances for Solana addresses you provide."
     )
-    parser.add_argument("--wallets", type=int, default=50, help="Number of wallets to generate per cycle.")
-    parser.add_argument("--sleep", type=float, default=5, help="Seconds to wait between cycles.")
+    parser.add_argument(
+        "--addresses",
+        required=True,
+        help="Text file containing one Solana public address per line.",
+    )
     parser.add_argument("--rpc-url", default=RPC_URL, help="Solana RPC endpoint to query.")
-    parser.add_argument("--once", action="store_true", help="Run a single cycle and exit.")
+    parser.add_argument(
+        "--request-interval",
+        type=float,
+        default=1.0,
+        help="Seconds to wait between address checks (default: 1).",
+    )
     args = parser.parse_args()
 
-    guess_counter = 0
-    while True:
-        guesstime = args.sleep
-        try:
-            walllist = guesslogic(batch_size=args.wallets, rpc_url=args.rpc_url)
-            guess_counter += len(walllist)
-            print("- Wallets checked: " + str(guess_counter), end="\r")
-            if args.once:
-                return 0
-            time.sleep(guesstime)
-        except Exception as exc:
-            seconds = max(5, guesstime * 12)
-            print("Exception: " + str(exc))
-            print("You were probably rate limited.")
-            print("Sleeping " + str(seconds) + " seconds.")
-            time.sleep(seconds)
+    if args.request_interval < 0:
+        parser.error("--request-interval must be zero or greater.")
+
+    try:
+        addresses = load_addresses(args.addresses)
+        check_addresses(addresses, args.rpc_url, args.request_interval)
+    except (OSError, ValueError, requests.RequestException, RuntimeError, KeyError) as exc:
+        parser.exit(1, f"Error: {exc}\n")
+    return 0
 
 
 if __name__ == "__main__":
-    print("--Running Solana wallet Guesser v1.0--")
-    sys.exit(main())
+    print("--Running Solana address balance checker v1.0--")
+    raise SystemExit(main())
